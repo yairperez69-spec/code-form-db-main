@@ -1,10 +1,76 @@
+import { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Database, Table as TableIcon, Columns } from 'lucide-react';
 import { firebirdDB } from '@/utils/firebirdSimulator';
+import { mysqlService } from '@/services/mysqlService';
+
+interface Table {
+  name: string;
+  columns: Array<{
+    name: string;
+    type: string;
+  }>;
+  data: Record<string, any>[];
+}
 
 export const DatabaseViewer = () => {
-  const currentDB = firebirdDB.getCurrentDatabase();
-  const databases = firebirdDB.listDatabases();
+  const [useMysql, setUseMysql] = useState(false);
+  const [currentDB, setCurrentDB] = useState<string | null>(null);
+  const [tables, setTables] = useState<Table[]>([]);
+  const [databases, setDatabases] = useState<string[]>([]);
+
+  // Cargar datos cada 2 segundos
+  useEffect(() => {
+    const loadData = async () => {
+      const backendAvailable = await mysqlService.isBackendAvailable();
+      setUseMysql(backendAvailable);
+
+      if (backendAvailable) {
+        // Usar MySQL
+        const dbList = await mysqlService.listDatabases();
+        setDatabases(dbList);
+
+        const tableList = await mysqlService.listTables();
+        
+        if (tableList.length > 0) {
+          setCurrentDB('MySQL');
+          
+          // Obtener estructura y datos de cada tabla
+          const tablesData: Table[] = [];
+          for (const tableName of tableList) {
+            const structure = await mysqlService.getTableStructure(tableName);
+            const result = await mysqlService.selectData(tableName, { limit: 100 });
+            
+            tablesData.push({
+              name: tableName,
+              columns: structure.map((col: any) => ({
+                name: col.Field,
+                type: col.Type
+              })),
+              data: result.data || []
+            });
+          }
+          setTables(tablesData);
+        } else {
+          setCurrentDB(null);
+          setTables([]);
+        }
+      } else {
+        // Usar simulador en memoria
+        const db = firebirdDB.getCurrentDatabase();
+        const dbList = firebirdDB.listDatabases();
+        
+        setDatabases(dbList);
+        setCurrentDB(db?.name || null);
+        setTables(db?.tables || []);
+      }
+    };
+
+    loadData();
+    const interval = setInterval(loadData, 2000); // Actualizar cada 2 segundos
+
+    return () => clearInterval(interval);
+  }, []);
 
   if (!currentDB) {
     return (
@@ -41,22 +107,24 @@ export const DatabaseViewer = () => {
         <div className="p-4 bg-success/10 border border-success/20 rounded-lg">
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
-            <span className="font-medium text-success">Conectado a: {currentDB.name}</span>
+            <span className="font-medium text-success">
+              {useMysql ? 'MySQL Activo' : `Conectado a: ${currentDB}`}
+            </span>
           </div>
           <p className="text-xs text-muted-foreground mt-1">
-            {currentDB.tables.length} tabla(s)
+            {tables.length} tabla(s)
           </p>
         </div>
 
         {/* Tables List */}
-        {currentDB.tables.length > 0 ? (
+        {tables.length > 0 ? (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <TableIcon className="w-4 h-4 text-primary" />
               <h4 className="font-medium text-sm text-foreground">Tablas</h4>
             </div>
             
-            {currentDB.tables.map((table, idx) => (
+            {tables.map((table, idx) => (
               <div key={idx} className="p-3 bg-muted rounded-lg">
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-medium text-sm text-foreground">{table.name}</span>
